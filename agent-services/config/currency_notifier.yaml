@@ -1,0 +1,29 @@
+app_name: currency-notifier
+discord:
+  mode: webhook
+  default_color: 0xFEE75C
+pairs:
+  - base: USD
+    quote: JPY
+    static_threshold: 145.0
+    dynamic:
+      window_days: 7
+      z_threshold: -1.5
+  - base: EUR
+    quote: USD
+    static_threshold: 1.05
+    dynamic:
+      window_days: 7
+      z_threshold: -1.5
+  - base: USD
+    quote: TWD
+    static_threshold: 31.5
+    dynamic:
+      window_days: 14
+      z_threshold: -1.5
+schedule:
+  cron: "0 17 * * mon-fri"
+  timezone: CET
+logging:
+  level: INFO
+  json: false

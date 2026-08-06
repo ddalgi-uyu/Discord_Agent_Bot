@@ -1,0 +1,58 @@
+[project]
+name = "agent-services"
+version = "0.1.0"
+description = "Monorepo of Discord agent services: news-digest, etf-signal, currency-notifier"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "apscheduler>=3.10",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "tenacity>=8.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "freezegun>=1.5",
+    "ruff>=0.5",
+    "pytest-cov>=5.0",
+]
+news-digest = [
+    "feedparser>=6.0",
+    "anthropic>=0.30",
+    "openai>=1.40",
+]
+etf-signal = [
+    "yfinance>=0.2.40",
+    "pandas>=2.2",
+    "pandas-ta>=0.3",
+    "transformers>=4.40",
+    "torch>=2.2",
+]
+currency-notifier = []
+all = ["agent-services[news-digest,etf-signal,currency-notifier]"]
+
+[project.scripts]
+news-digest = "news_digest.__main__:main"
+etf-signal = "etf_signal.__main__:main"
+currency-notifier = "currency_notifier.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["common*", "news_digest*", "etf_signal*", "currency_notifier*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]

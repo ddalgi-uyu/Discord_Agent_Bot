@@ -1,0 +1,26 @@
+app_name: news-digest
+discord:
+  mode: webhook
+  default_color: 0x5865F2
+feeds:
+  - name: Hacker News
+    url: https://news.ycombinator.com/rss
+    category: tech
+  - name: BBC World
+    url: https://feeds.bbci.co.uk/news/world/rss.xml
+    category: general
+  - name: Reuters Business
+    url: https://feeds.reuters.com/reuters/businessNews
+    category: finance
+ai:
+  provider: anthropic
+  model: claude-3-5-sonnet-latest
+  max_items: 10
+  max_bullets_per_category: 3
+  max_output_chars: 2000
+schedule:
+  cron: "0 8 * * *"
+  timezone: UTC
+logging:
+  level: INFO
+  json: false

@@ -1,0 +1,5 @@
+# Shared defaults loaded by all apps
+logging:
+  level: INFO
+  json: false
+timezone: UTC

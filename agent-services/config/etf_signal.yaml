@@ -1,0 +1,30 @@
+app_name: etf-signal
+discord:
+  mode: webhook
+  default_color: 0x57F287
+symbols:
+  - SPY
+  - QQQ
+  - VTI
+indicators:
+  rsi_period: 14
+  sma_periods:
+    - 20
+    - 50
+    - 200
+  bollinger_period: 20
+  bollinger_std: 2.0
+sentiment:
+  enabled: true
+  model: ProsusAI/finbert
+  news_per_symbol: 5
+thresholds:
+  rsi_oversold: 30
+  rsi_moderate: 35
+  min_confidence: 0.6
+schedule:
+  cron: "0 9-16 * * mon-fri"
+  timezone: US/Eastern
+logging:
+  level: INFO
+  json: false

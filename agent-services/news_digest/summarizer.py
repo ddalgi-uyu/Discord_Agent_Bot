@@ -1,0 +1,264 @@
+"""AI summarisation for the news digest pipeline.
+
+Provides :func:`summarize`, a thin async wrapper over either the Anthropic or
+OpenAI chat completion API. All articles are sent in a single batch call (one
+API round-trip per digest cycle) and the resulting markdown digest is
+returned as a string. Provider selection is driven by ``ai_config.provider``.
+
+API keys are read from environment variables:
+
+* ``ANTHROPIC_API_KEY`` — used when ``ai_config.provider == "anthropic"``
+* ``OPENAI_API_KEY``     — used when ``ai_config.provider == "openai"``
+
+Failures (missing key, network error, API error) are logged and surfaced as
+a human-readable error string instead of being raised. The pipeline can then
+post the error message to Discord without crashing the scheduler.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from collections.abc import Iterable, Mapping
+from typing import Any
+
+from news_digest.rss_fetcher import Article
+
+__all__ = ["summarize", "build_prompt"]
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Prompt construction
+# ---------------------------------------------------------------------------
+
+
+def _group_by_category(articles: Iterable[Article]) -> dict[str, list[Article]]:
+    """Group articles by their ``category`` (preserving first-seen order)."""
+    grouped: dict[str, list[Article]] = {}
+    for article in articles:
+        grouped.setdefault(article.category or "uncategorised", []).append(article)
+    return grouped
+
+
+def _format_articles(articles: Iterable[Article]) -> str:
+    """Render the article payload sent to the model."""
+    lines: list[str] = []
+    for article in articles:
+        lines.append(f"- Title: {article.title}")
+        if article.link:
+            lines.append(f"  Link: {article.link}")
+        if article.summary:
+            # Trim very long summaries to keep the prompt manageable.
+            summary = article.summary.replace("\n", " ").strip()
+            if len(summary) > 400:
+                summary = summary[:400].rstrip() + "…"
+            lines.append(f"  Summary: {summary}")
+        lines.append(f"  Source: {article.feed_name}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def build_prompt(
+    articles: list[Article],
+    *,
+    max_bullets_per_category: int,
+    max_output_chars: int,
+) -> tuple[str, str]:
+    """Build ``(system_prompt, user_prompt)`` for the digest call.
+
+    The system prompt is fixed wording plus the constraints. The user prompt
+    contains the articles grouped by category. The model is asked to emit
+    ``## <Category>`` headings so the pipeline can split the response into
+    one Discord embed field per category.
+    """
+    system_prompt = (
+        "You are a news analyst. Summarize the following articles into a "
+        f"concise digest. For each category, provide at most "
+        f"{max_bullets_per_category} bullet points. Total output must be "
+        f"under {max_output_chars} characters. Format in markdown.\n\n"
+        "Use a level-2 markdown heading (``## CategoryName``) for each "
+        "category. Under each heading emit exactly one bullet per key story, "
+        "starting with ``- ``. Do not include any other sections, preamble "
+        "or commentary."
+    )
+
+    if not articles:
+        user_prompt = "No articles to summarise."
+    else:
+        grouped = _group_by_category(articles)
+        sections: list[str] = []
+        for category, items in grouped.items():
+            sections.append(f"## {category}\n\n{_format_articles(items)}")
+        user_prompt = "\n\n".join(sections)
+
+    return system_prompt, user_prompt
+
+
+# ---------------------------------------------------------------------------
+# Provider implementations
+# ---------------------------------------------------------------------------
+
+
+async def _summarize_anthropic(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    model: str,
+    max_output_chars: int,
+) -> str:
+    """Single-call Anthropic summarisation.
+
+    Imports the SDK lazily so the rest of the module remains importable in
+    environments where ``anthropic`` is not installed (e.g. CI for unrelated
+    test suites).
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY environment variable is not set")
+
+    # Imported here so the module can be imported without the SDK present.
+    from anthropic import AsyncAnthropic  # type: ignore[import-not-found]
+
+    client = AsyncAnthropic(api_key=api_key)
+    try:
+        # ``max_tokens`` must be > 0 and large enough to hold the digest;
+        # cap at the soft ceiling plus a buffer for the model's framing.
+        max_tokens = max(256, max_output_chars + 256)
+        response = await client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    finally:
+        await client.close()
+
+    parts: list[str] = []
+    for block in getattr(response, "content", []) or []:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return "".join(parts).strip()
+
+
+async def _summarize_openai(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    model: str,
+    max_output_chars: int,
+) -> str:
+    """Single-call OpenAI chat completion summarisation."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY environment variable is not set")
+
+    from openai import AsyncOpenAI  # type: ignore[import-not-found]
+
+    client = AsyncOpenAI(api_key=api_key)
+    try:
+        # ``max_completion_tokens`` is the modern parameter; older models also
+        # accept ``max_tokens``. We pass ``max_tokens`` for maximum
+        # compatibility across the GPT-3.5 / GPT-4 / GPT-4o families.
+        response = await client.chat.completions.create(
+            model=model,
+            max_tokens=max(256, max_output_chars + 256),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+    finally:
+        await client.close()
+
+    if not getattr(response, "choices", None):
+        return ""
+    return (response.choices[0].message.content or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def _resolve_provider(config: Any) -> str:
+    """Return the provider name from either a dict or a pydantic-style object."""
+    if isinstance(config, Mapping):
+        return str(config.get("provider", "anthropic"))
+    return str(getattr(config, "provider", "anthropic"))
+
+
+def _resolve_attr(config: Any, key: str, default: Any) -> Any:
+    if isinstance(config, Mapping):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+async def summarize(articles: list[Article], ai_config: Any) -> str:
+    """Produce a markdown digest of ``articles`` in a single API call.
+
+    Parameters
+    ----------
+    articles:
+        Articles to summarise. Respects ``ai_config.max_items`` by truncating
+        the list before sending.
+    ai_config:
+        Object (pydantic model or dict) exposing ``provider``, ``model``,
+        ``max_items``, ``max_bullets_per_category`` and ``max_output_chars``.
+
+    Returns
+    -------
+    str
+        The markdown digest from the model. On failure (missing key, network
+        or API error) returns a short human-readable error message instead of
+        raising — this keeps the scheduler running.
+    """
+    provider = _resolve_provider(ai_config)
+    model = str(_resolve_attr(ai_config, "model", "claude-3-5-sonnet-latest"))
+    max_items = int(_resolve_attr(ai_config, "max_items", 10))
+    max_bullets = int(_resolve_attr(ai_config, "max_bullets_per_category", 3))
+    max_chars = int(_resolve_attr(ai_config, "max_output_chars", 2000))
+
+    truncated = list(articles[:max_items])
+    system_prompt, user_prompt = build_prompt(
+        truncated,
+        max_bullets_per_category=max_bullets,
+        max_output_chars=max_chars,
+    )
+
+    logger.info(
+        "summarize: provider=%s model=%s articles=%d (truncated from %d)",
+        provider,
+        model,
+        len(truncated),
+        len(articles),
+    )
+
+    try:
+        if provider == "openai":
+            return await _summarize_openai(
+                system_prompt,
+                user_prompt,
+                model=model,
+                max_output_chars=max_chars,
+            )
+        if provider == "anthropic":
+            return await _summarize_anthropic(
+                system_prompt,
+                user_prompt,
+                model=model,
+                max_output_chars=max_chars,
+            )
+        return f"❌ Unknown AI provider: {provider!r}"
+    except Exception as exc:  # noqa: BLE001 — bulletproof contract
+        logger.error(
+            "summarize: %s API call failed: %s",
+            provider,
+            exc,
+            exc_info=True,
+        )
+        return (
+            f"❌ News digest generation failed ({provider} error): "
+            f"{type(exc).__name__}: {exc}"
+        )
