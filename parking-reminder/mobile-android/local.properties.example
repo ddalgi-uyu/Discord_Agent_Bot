@@ -1,0 +1,11 @@
+# Sample local.properties — copy this file to local.properties and update sdk.dir
+# to point to your installed Android SDK.
+#
+# Example paths:
+#   Windows: C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk
+#   macOS:   /Users/<you>/Library/Android/sdk
+#   Linux:   /home/<you>/Android/Sdk
+#
+# Alternatively, set the ANDROID_HOME (or ANDROID_SDK_ROOT) environment variable
+# and the build will use it automatically.
+sdk.dir=

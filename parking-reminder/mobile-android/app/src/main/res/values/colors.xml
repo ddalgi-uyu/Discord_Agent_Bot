@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="status_bar">#FF1F1B16</color>
+    <color name="window_background">#FFFFF8F1</color>
+    <color name="widget_background">#FFFFF8F1</color>
+    <color name="widget_text_primary">#FF1F1B16</color>
+    <color name="widget_text_secondary">#FF6F665B</color>
+    <color name="widget_accent">#FFE26A2C</color>
+</resources>

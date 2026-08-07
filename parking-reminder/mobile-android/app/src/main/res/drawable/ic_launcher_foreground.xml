@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Pin-shaped icon, centred in the safe zone (72x72 around (54,54)). -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 C46.27,28 40,34.27 40,42 C40,49 45,55 50,58 L50,68 L46,68 L46,72 L62,72 L62,68 L58,68 L58,58 C63,55 68,49 68,42 C68,34.27 61.73,28 54,28 Z M54,36 C57.31,36 60,38.69 60,42 C60,45.31 57.31,48 54,48 C50.69,48 48,45.31 48,42 C48,38.69 50.69,36 54,36 Z" />
+</vector>
