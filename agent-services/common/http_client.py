@@ -117,4 +117,5 @@ def create_async_client(
         timeout=timeout,
         headers=headers,
         transport=retry_transport,
+        follow_redirects=True,
     )

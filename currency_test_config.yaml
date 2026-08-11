@@ -1,0 +1,19 @@
+app_name: "currency-notifier"
+discord:
+  mode: "webhook"
+  webhook_url: "https://discord.com/api/webhooks/test-webhook-url"
+  default_color: 0x5865F2
+logging:
+  level: "DEBUG"
+  json: false
+schedule:
+  cron: "0 8 * * *"
+  interval_seconds: 3600
+timezone: "UTC"
+pairs:
+  - base: "USD"
+    quote: "EUR"
+    static_threshold: 0.9
+    dynamic:
+      window_days: 14
+    change_threshold_pct: 1.0

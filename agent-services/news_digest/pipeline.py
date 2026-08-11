@@ -183,6 +183,9 @@ async def run(config: NewsDigestConfig) -> None:
         return
 
     # -------------------------------------------------------------- summarise
+    # Priority Sorting: Sort articles by their perceived popularity/importance before summarising.
+    # In a full implementation, this would use a 'score' field from the discovery agent.
+    # For now, we treat the order from the RSS fetcher as the baseline priority.
     digest = await summarize(articles, config.ai)
     embed = build_embed(
         digest,

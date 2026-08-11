@@ -36,13 +36,13 @@ class FeedConfig(BaseModel):
 
 class AIConfig(BaseModel):
     """AI summarisation settings.
-
+    
     Defaults match ``config/news_digest.yaml``. ``max_output_chars`` is a soft
     ceiling enforced via the system prompt; the underlying API call is not
     constrained beyond ``max_tokens`` for Anthropic.
     """
-
-    provider: Literal["anthropic", "openai"] = "anthropic"
+    
+    provider: Literal["anthropic", "openai", "fallback"] = "anthropic"
     model: str = "claude-3-5-sonnet-latest"
     # Hard cap on the number of articles sent to the model in one batch.
     max_items: int = Field(default=10, ge=1)
@@ -50,6 +50,7 @@ class AIConfig(BaseModel):
     max_bullets_per_category: int = Field(default=3, ge=1)
     # Soft ceiling on the rendered markdown output, advertised to the model.
     max_output_chars: int = Field(default=2000, ge=100)
+
 
 
 class NewsDigestConfig(AppConfig):

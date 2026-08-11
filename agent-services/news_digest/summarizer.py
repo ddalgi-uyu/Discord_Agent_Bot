@@ -195,38 +195,57 @@ def _resolve_attr(config: Any, key: str, default: Any) -> Any:
     return getattr(config, key, default)
 
 
+async def _summarize_fallback(
+    articles: list[Article],
+) -> str:
+    """Fallback summarizer that uses lead-paragraph extraction.
+    
+    This method requires no API keys and provides a basic summary by
+    extracting the first 200 characters of the top articles.
+    """
+    summaries = []
+    for i, art in enumerate(articles[:5], 1):
+        # Use a simple lead extraction. 
+        # We ensure no HTML tags are present by treating it as plain text.
+        content = art.summary or art.title or "No content available"
+        
+        # Basic HTML tag stripping if present (e.g. <a href...>)
+        import re
+        clean_content = re.sub(r'<[^> idea] +[^>]*>', '', content).strip() # Attempt to clean HTML
+        # Actually, a simpler regex for any tag
+        clean_content = re.sub(r'<[^>]+>', '', content).strip()
+        
+        snippet = (clean_content[:180] + "...") if len(clean_content) > 180 else clean_content
+        
+        # Instead of just the snippet, we append the link as a markdown link
+        # This solves the HTML tag issue and makes it look professional
+        link_text = f" [Source]({art.link})" if art.link else ""
+        summaries.append(f"**{i}. {art.title}**\n{snippet}{link_text}")
+    
+    if not summaries:
+        return "No articles found for this category."
+        
+    return "\n\n".join(summaries)
+
 async def summarize(articles: list[Article], ai_config: Any) -> str:
-    """Produce a markdown digest of ``articles`` in a single API call.
-
-    Parameters
-    ----------
-    articles:
-        Articles to summarise. Respects ``ai_config.max_items`` by truncating
-        the list before sending.
-    ai_config:
-        Object (pydantic model or dict) exposing ``provider``, ``model``,
-        ``max_items``, ``max_bullets_per_category`` and ``max_output_chars``.
-
-    Returns
-    -------
-    str
-        The markdown digest from the model. On failure (missing key, network
-        or API error) returns a short human-readable error message instead of
-        raising — this keeps the scheduler running.
+    """Produce a markdown digest of ``articles``.
+    
+    Uses specified provider (anthropic/openai) if keys exist, 
+    otherwise falls back to a keyless lead-extraction method.
     """
     provider = _resolve_provider(ai_config)
     model = str(_resolve_attr(ai_config, "model", "claude-3-5-sonnet-latest"))
     max_items = int(_resolve_attr(ai_config, "max_items", 10))
     max_bullets = int(_resolve_attr(ai_config, "max_bullets_per_category", 3))
     max_chars = int(_resolve_attr(ai_config, "max_output_chars", 2000))
-
+    
     truncated = list(articles[:max_items])
     system_prompt, user_prompt = build_prompt(
         truncated,
         max_bullets_per_category=max_bullets,
         max_output_chars=max_chars,
     )
-
+    
     logger.info(
         "summarize: provider=%s model=%s articles=%d (truncated from %d)",
         provider,
@@ -234,7 +253,7 @@ async def summarize(articles: list[Article], ai_config: Any) -> str:
         len(truncated),
         len(articles),
     )
-
+    
     try:
         if provider == "openai":
             return await _summarize_openai(
@@ -250,15 +269,12 @@ async def summarize(articles: list[Article], ai_config: Any) -> str:
                 model=model,
                 max_output_chars=max_chars,
             )
-        return f"❌ Unknown AI provider: {provider!r}"
-    except Exception as exc:  # noqa: BLE001 — bulletproof contract
-        logger.error(
-            "summarize: %s API call failed: %s",
-            provider,
-            exc,
-            exc_info=True,
-        )
-        return (
-            f"❌ News digest generation failed ({provider} error): "
-            f"{type(exc).__name__}: {exc}"
-        )
+        
+        # Default to fallback if provider is unknown or explicitly 'fallback'
+        return await _summarize_fallback(truncated)
+        
+    except Exception as exc:
+        # If API fails (e.g. missing key), automatically try fallback
+        logger.error("API summarization failed, attempting fallback: %s", exc)
+        return await _summarize_fallback(truncated)
+

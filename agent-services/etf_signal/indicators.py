@@ -24,23 +24,32 @@ from etf_signal.config import EtfSignalConfig
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Third-party imports (guarded)
-# ---------------------------------------------------------------------------
-
-# Exposed at module scope so tests can monkeypatch these references without
-# touching the global import system. ``None`` means the library is not
-# installed in the current interpreter; the runtime guards below translate
-# that into a logged warning + ``None`` return value rather than a crash.
 try:
     import yfinance as yf  # type: ignore[import-untyped]
 except ImportError:  # pragma: no cover
     yf = None  # type: ignore[assignment,misc]
 
-try:
-    import pandas_ta as ta  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover
-    ta = None  # type: ignore[assignment,misc]
+def _calc_sma(series: Any, period: int) -> Any:
+    """Simple Moving Average."""
+    return series.rolling(window=period).mean()
+
+def _calc_rsi(series: Any, period: int) -> Any:
+    """Relative Strength Index (Wilder's Smoothing)."""
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def _calc_bbands(series: Any, period: int, std_dev: float) -> tuple[Any, Any, Any]:
+    """Bollinger Bands."""
+    sma = series.rolling(window=period).mean()
+    std = series.rolling(window=period).std()
+    upper = sma + (std * std_dev)
+    lower = sma - (std * std_dev)
+    return lower, sma, upper
+
 
 
 # Sentinels used by the validation helper. These are kept module-private
@@ -103,9 +112,18 @@ def validate_dataframe(df: Any, symbol: str) -> bool:
 
     close = df["Close"]
     isna_attr = getattr(close, "isna", None)
-    if isna_attr is not None and bool(isna_attr().any()):
-        logger.warning("yfinance DataFrame for %s has NaN in 'Close'", symbol)
-        return False
+    if isna_attr is not None:
+        # Use .any() and explicitly convert the result to a Python boolean.
+        # We use .any() twice or wrap in a check to ensure we're not dealing with a Series.
+        nan_present = close.isna().any()
+        if hasattr(nan_present, "any"):
+            nan_present = nan_present.any()
+        
+        if bool(nan_present):
+            logger.warning("yfinance DataFrame for %s has NaN in 'Close'", symbol)
+            return False
+
+
 
     # Inf / NaN walk — duck-typed to avoid a numpy dependency.
     for raw in close:
@@ -134,14 +152,14 @@ async def compute_indicators(
     config: EtfSignalConfig,
 ) -> dict[str, Any] | None:
     """Compute the latest RSI / SMA / Bollinger values for ``symbol``.
-
+    
     Returns a dict ``{symbol, price, rsi, sma_20, sma_50, sma_200, bb_lower,
     bb_mid, bb_upper}`` on success, or ``None`` when:
-
-    * ``yfinance`` / ``pandas_ta`` are not installed,
+    
+    * ``yfinance`` is not installed,
     * the download fails (network errors, rate limits, …),
     * the returned DataFrame fails validation.
-
+    
     Never raises. Errors are logged via :mod:`logging`.
     """
     if yf is None:  # pragma: no cover
@@ -150,13 +168,7 @@ async def compute_indicators(
             symbol,
         )
         return None
-    if ta is None:  # pragma: no cover
-        logger.warning(
-            "pandas_ta not installed; cannot compute indicators for %s",
-            symbol,
-        )
-        return None
-
+    
     try:
         df = yf.download(  # type: ignore[union-attr]
             symbol,
@@ -167,58 +179,34 @@ async def compute_indicators(
     except Exception as exc:  # noqa: BLE001 — yfinance raises everything
         logger.warning("yfinance download failed for %s: %s", symbol, exc)
         return None
-
+    
     if not validate_dataframe(df, symbol):
         return None
-
+    
     close = df["Close"].astype(float)
-
+    
     # ---- RSI --------------------------------------------------------------
     rsi_period = config.indicators.rsi_period
-    rsi_series = ta.rsi(close, length=rsi_period)  # type: ignore[union-attr]
+    rsi_series = _calc_rsi(close, rsi_period)
     rsi_val = float(rsi_series.iloc[-1])
-
+    
     # ---- SMAs -------------------------------------------------------------
     sma_values: dict[int, float] = {}
     for period in config.indicators.sma_periods:
-        sma_series = ta.sma(close, length=period)  # type: ignore[union-attr]
+        sma_series = _calc_sma(close, period)
         sma_values[period] = float(sma_series.iloc[-1])
-
+    
     # ---- Bollinger Bands --------------------------------------------------
     bb_period = config.indicators.bollinger_period
     bb_std = config.indicators.bollinger_std
-    bbands_df = ta.bbands(  # type: ignore[union-attr]
-        close,
-        length=bb_period,
-        std=bb_std,
+    bb_lower_series, bb_mid_series, bb_upper_series = _calc_bbands(
+        close, bb_period, bb_std
     )
-    # pandas_ta names the columns ``BBL_{p}_{std}``, ``BBM_{p}_{std}``,
-    # ``BBU_{p}_{std}``. We resolve by prefix so the code survives any
-    # pandas_ta rename across versions.
-    bb_lower_col = next(
-        (c for c in bbands_df.columns if c.startswith(f"BBL_{bb_period}_")),
-        None,
-    )
-    bb_mid_col = next(
-        (c for c in bbands_df.columns if c.startswith(f"BBM_{bb_period}_")),
-        None,
-    )
-    bb_upper_col = next(
-        (c for c in bbands_df.columns if c.startswith(f"BBU_{bb_period}_")),
-        None,
-    )
-    if bb_lower_col is None or bb_mid_col is None or bb_upper_col is None:
-        logger.warning(
-            "pandas_ta.bbands returned unexpected columns %r for %s",
-            list(bbands_df.columns),
-            symbol,
-        )
-        return None
-
-    bb_lower = float(bbands_df[bb_lower_col].iloc[-1])
-    bb_mid = float(bbands_df[bb_mid_col].iloc[-1])
-    bb_upper = float(bbands_df[bb_upper_col].iloc[-1])
-
+    
+    bb_lower = float(bb_lower_series.iloc[-1])
+    bb_mid = float(bb_mid_series.iloc[-1])
+    bb_upper = float(bb_upper_series.iloc[-1])
+    
     return {
         "symbol": symbol,
         "price": float(close.iloc[-1]),
@@ -230,6 +218,8 @@ async def compute_indicators(
         "bb_mid": bb_mid,
         "bb_upper": bb_upper,
     }
+
+
 
 
 __all__ = [

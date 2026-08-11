@@ -1,38 +1,7 @@
-# Dependencies
-node_modules/
-
-# Build output
-dist/
-build/
-
-# Environment
+config/*.yaml
 .env
-.env.local
-
-# Database
-*.db
-*.db-journal
-data/
-
-# IDE
+__pycache__/
+*.pyc
+.DS_Store
 .idea/
 .vscode/
-*.iml
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Android
-*.apk
-*.aab
-.gradle/
-local.properties
-*.jks
-keystore.properties
-
-# Prisma
-backend/src/generated/
-
-# Logs
-*.log

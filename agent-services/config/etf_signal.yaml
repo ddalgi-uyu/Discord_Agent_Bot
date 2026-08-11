@@ -1,17 +1,21 @@
 app_name: etf-signal
 discord:
   mode: webhook
-  default_color: 0x57F287
+  webhook_url: https://discordapp.com/api/webhooks/1536577285581307964/AOcJGcEypXikaKeGKCEGsqSp-QJL53owqwvHqKn7ybaXfcQBd7Rp5GkesRoPN5HDhLJ4
+  default_color: 5763719
 symbols:
-  - SPY
-  - QQQ
-  - VTI
+- SPY
+- QQQ
+- VTI
+- TSLA
+- NVDA
+- ARKK
 indicators:
   rsi_period: 14
   sma_periods:
-    - 20
-    - 50
-    - 200
+  - 20
+  - 50
+  - 200
   bollinger_period: 20
   bollinger_std: 2.0
 sentiment:
@@ -23,8 +27,8 @@ thresholds:
   rsi_moderate: 35
   min_confidence: 0.6
 schedule:
-  cron: "0 9-16 * * mon-fri"
-  timezone: US/Eastern
+  cron: 0 9-16 * * mon-fri
+  timezone: UTC
 logging:
   level: INFO
   json: false

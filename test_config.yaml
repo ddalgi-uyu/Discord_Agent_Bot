@@ -1,0 +1,12 @@
+app_name: "test-app"
+discord:
+  mode: "webhook"
+  webhook_url: "https://discord.com/api/webhooks/test"
+  default_color: 123456
+logging:
+  level: "DEBUG"
+  json: true
+schedule:
+  cron: "0 8 * * *"
+  interval_seconds: 3600
+timezone: "Asia/Taipei"

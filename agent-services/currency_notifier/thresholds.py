@@ -153,33 +153,38 @@ def evaluate_thresholds(
     history: list[float],
 ) -> list[dict[str, Any]]:
     """Run every configured threshold check for ``rate``.
-
-    Parameters
-    ----------
-    pair_config:
-        Plain ``dict`` representation of a :class:`PairConfig`. Must contain
-        at least ``base`` and ``quote`` for the alert ``pair`` label.
-    rate:
-        Current exchange rate.
-    history:
-        Recent rates for the pair, oldest-first (so ``history[-1]`` is the
-        most recent past observation). May be empty or shorter than the
-        configured window — checks that need samples will simply be skipped.
-
-    Returns
-    -------
-    A list of triggered alerts. Each alert is a ``dict`` with at least the
-    keys ``type``, ``pair``, ``rate``, and ``message`` (additional keys are
-    added per ``type``: ``threshold``, ``z_score``, ``mean``, ``change_pct``).
-    An empty list means no thresholds fired.
+    
+    Returns a list of triggered alerts. Each alert now includes a 'level' 
+    ('STRONG', 'GOOD', 'MONITOR') to drive Discord visual styling.
     """
     pair = _pair_label(pair_config)
     alerts: list[dict[str, Any]] = []
 
-    # Static check needs no history at all — run it first so a pair with no
-    # history still benefits from absolute thresholds.
-    alerts.extend(_evaluate_static(pair_config, rate, pair))
-    alerts.extend(_evaluate_dynamic(pair_config, rate, history, pair))
-    alerts.extend(_evaluate_change_pct(pair_config, rate, history, pair))
+    static_alerts = _evaluate_static(pair_config, rate, pair)
+    for a in static_alerts:
+        a["level"] = "STRONG" if rate <= (float(pair_config.get("static_threshold", 0)) * 0.95) else "GOOD"
+        alerts.append(a)
+
+    dynamic_alerts = _evaluate_dynamic(pair_config, rate, history, pair)
+    for a in dynamic_alerts:
+        z = a.get("z_score", 0)
+        if z <= -2.0:
+            a["level"] = "STRONG"
+        elif z <= -1.0:
+            a["level"] = "GOOD"
+        else:
+            a["level"] = "MONITOR"
+        alerts.append(a)
+
+    pct_alerts = _evaluate_change_pct(pair_config, rate, history, pair)
+    for a in pct_alerts:
+        change = a.get("change_pct", 0)
+        threshold = float(pair_config.get("change_threshold_pct", 1.0))
+        if change >= threshold * 2:
+            a["level"] = "STRONG"
+        else:
+            a["level"] = "GOOD"
+        alerts.append(a)
 
     return alerts
+

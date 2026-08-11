@@ -30,6 +30,7 @@ from common.discord_notifier import (
 )
 from common.exceptions import FetchError
 from common.http_client import create_async_client
+from common.visualizer import generate_trend_chart
 
 from currency_notifier.config import CurrencyNotifierConfig
 from currency_notifier.rates import RateStore, fetch_rate
@@ -74,8 +75,20 @@ def _build_embed(
     history: list[float],
     alerts: list[dict[str, Any]],
     color: int,
-) -> Embed:
-    """Construct the Discord embed for a triggered alert bundle."""
+) -> tuple[Embed, Path | None]:
+    """Construct the Discord embed and optional trend chart.
+    
+    Returns a tuple of (Embed, chart_path).
+    """
+    # Determine the highest alert level present to set the embed color
+    levels = [a.get("level", "MONITOR") for a in alerts]
+    if "STRONG" in levels:
+        final_color = 0xFF0000  # Bright Red
+    elif "GOOD" in levels:
+        final_color = 0x00FF00  # Bright Green
+    else:
+        final_color = color # Default Blurple
+
     static = pair_config.get("static_threshold")
     target_text = f"{float(static):.4f}" if static is not None else "n/a"
 
@@ -95,9 +108,11 @@ def _build_embed(
     ]
 
     for alert in alerts:
+        level = alert.get("level", "MONITOR")
+        icon = "🚨" if level == "STRONG" else "✅" if level == "GOOD" else "ℹ️"
         fields.append(
             EmbedField(
-                name=f"⚠ {alert['type']}",
+                name=f"{icon} {level} - {alert['type']}",
                 value=str(alert.get("message", "")),
                 inline=False,
             )
@@ -109,12 +124,24 @@ def _build_embed(
         .replace("+00:00", "Z")
     )
 
-    return Embed(
+    # Generate Trend Chart
+    # convert history [float] to list[tuple[float, datetime]] for visualizer
+    history_with_ts = []
+    # Note: this is a simplification; in a real system we'd pass the actual timestamps
+    # but since we are just verifying the visual, we can simulate them.
+    # To be precise, we should pass the history from store.get_recent_rates directly.
+    
+    # Correcting: we will pass the actual tuples from _process_pair instead.
+    # See change in _process_pair below.
+    
+    embed = Embed(
         title=f"💱 Currency Alert: {pair}",
-        color=color,
+        color=final_color,
         fields=fields,
         timestamp=timestamp,
     )
+    
+    return embed, None # Chart path will be handled in _process_pair
 
 
 async def _process_pair(
@@ -163,7 +190,18 @@ async def _process_pair(
         )
         return False
 
-    embed = _build_embed(pair, rate, pair_dict, history, alerts, color)
+    # Generate Visual Trend Chart
+    chart_path = generate_trend_chart(
+        pair=pair,
+        history=recent,
+        current_rate=rate,
+        target_rate=pair_dict.get("static_threshold"),
+    )
+
+    embed, _ = _build_embed(pair, rate, pair_dict, history, alerts, color)
+    if chart_path:
+        embed.image = str(chart_path)
+    
     delivered = await notifier.send_embed(embed)
     if not delivered:
         logger.error("Discord delivery failed for %s", pair)

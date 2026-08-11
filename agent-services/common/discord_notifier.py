@@ -98,6 +98,7 @@ class Embed:
     url: str | None = None
     timestamp: str | None = None  # ISO-8601 string
     footer: str | None = None
+    image: str | None = None  # URL or local path reference
 
 
 def embed_to_dict(embed: Embed) -> dict[str, Any]:
@@ -119,6 +120,8 @@ def embed_to_dict(embed: Embed) -> dict[str, Any]:
     if embed.footer:
         # Discord's footer is an object: ``{"text": "..."}``.
         payload["footer"] = {"text": embed.footer}
+    if embed.image:
+        payload["image"] = {"url": embed.image}
     if embed.fields:
         payload["fields"] = [
             {"name": f.name, "value": f.value, "inline": f.inline}

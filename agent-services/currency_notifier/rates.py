@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 #: Frankfurter public API endpoint. The service updates rates once per business
 #: day, so polling more often than daily just yields the same numbers.
-FRANKFURTER_URL = "https://api.frankfurter.dev/latest"
+FRANKFURTER_URL = "https://api.frankfurter.app/latest"
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS currency_rates (
