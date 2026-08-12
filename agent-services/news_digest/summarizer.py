@@ -42,14 +42,17 @@ def _group_by_category(articles: Iterable[Article]) -> dict[str, list[Article]]:
 
 
 def _format_articles(articles: Iterable[Article]) -> str:
-    """Render the article payload sent to the model."""
+    """Render the article payload sent to the model.
+    
+    Includes the reach/popularity score in the prompt so the AI can
+    prioritise higher-impact stories during summarisation.
+    """
     lines: list[str] = []
     for article in articles:
-        lines.append(f"- Title: {article.title}")
+        lines.append(f"- Title: {article.title} (Reach Score: {article.score})")
         if article.link:
             lines.append(f"  Link: {article.link}")
         if article.summary:
-            # Clean HTML tags from summaries before sending to the model
             import re
             summary = re.sub(r'<[^>]+>', '', article.summary).replace("\n", " ").strip()
             if len(summary) > 400:
@@ -67,21 +70,22 @@ def build_prompt(
     max_output_chars: int,
 ) -> tuple[str, str]:
     """Build ``(system_prompt, user_prompt)`` for the digest call.
-
-    The system prompt is fixed wording plus the constraints. The user prompt
-    contains the articles grouped by category. The model is asked to emit
-    ``## <Category>`` headings so the pipeline can split the response into
-    one Discord embed field per category.
+    
+    The system prompt now includes instructions for Impact Scoring.
     """
     system_prompt = (
-        "You are a news analyst. Summarize the following articles into a "
-        f"concise digest. For each category, provide at most "
-        f"{max_bullets_per_category} bullet points. Total output must be "
-        f"under {max_output_chars} characters. Format in markdown.\n\n"
-        "Use a level-2 markdown heading (``## CategoryName``) for each "
-        "category. Under each heading emit exactly one bullet per key story, "
-        "starting with ``- ``. Do not include any other sections, preamble "
-        "or commentary."
+        "You are a senior financial analyst. Your task is to produce a a high-signal news digest.\n\n"
+        "1. ANALYZE: For every article, evaluate its 'Market Impact Score' from 1 to 10.\n"
+        "   - 1-3: Routine news, minor updates.\n"
+        "   - 4-7: Meaningful shifts, quarterly reports, sector trends.\n"
+        "   - 8-10: Critical events, black swans, major policy changes, or massive price catalysts.\n\n"
+        "2. PRIORITIZE: Use the provided 'Reach Score' and your calculated 'Impact Score' to select "
+        "the most important stories. Prioritize high-impact stories over high-reach fluff.\n\n"
+        f"3. SUMMARIZE: For each category, provide at most {max_bullets_per_category} bullet points. "
+        f"Total output must be under {max_output_chars} characters. Format in markdown.\n\n"
+        "4. FORMATTING: Use a level-2 markdown heading (``## CategoryName``) for each category. "
+        "Start each bullet with ``- ``. If a story is an 'Impact 8+' event, prefix the bullet with '🚨'.\n\n"
+        "Do not include any other sections, preamble or commentary."
     )
 
     if not articles:

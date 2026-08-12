@@ -42,6 +42,7 @@ class Article:
     published: datetime
     feed_name: str
     category: str
+    score: float = 1.0 # Default popularity/reach score
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +150,7 @@ async def _parse_feed(
                 published=published,
                 feed_name=name,
                 category=category,
+                score=float(entry.get("comments_count", 1.0)) if hasattr(entry, "get") and entry.get("comments_count") else 1.0,
             )
         )
 

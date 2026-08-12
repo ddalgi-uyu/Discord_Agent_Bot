@@ -80,25 +80,30 @@ def build_embed(
     footer: str = "agent-services · news-digest",
 ) -> Embed:
     """Convert a markdown digest into a Discord :class:`Embed`.
-
-    The preamble becomes the embed description; each ``## Category`` section
-    becomes a separate field named after the category.
+    
+    High Impact stories (prefixed with 🚨) are highlighted by ensuring they 
+    appear at the top of their respective category fields.
     """
     preamble, sections = parse_digest_sections(digest)
 
     fields: list[EmbedField] = []
     for name, body in sections:
-        # Strip the leading ``## Heading`` line from the body so the field
-        # value only contains the bullet list.
         body_lines = body.splitlines()
         if body_lines and body_lines[0].lstrip().startswith("##"):
             body_lines = body_lines[1:]
-        body_text = "\n".join(body_lines).strip()
+        
+        # Re-sort body lines to ensure 🚨 High Impact stories are always at the top
+        # of the field, regardless of AI's layout.
+        high_impact = [line for line in body_lines if "🚨" in line]
+        others = [line for line in body_lines if "🚨" not in line]
+        sorted_body = high_impact + others
+        
+        body_text = "\n".join(sorted_body).strip()
         if not body_text:
             continue
         fields.append(
             EmbedField(
-                name=name[:256],  # Discord field-name limit
+                name=name[:256],
                 value=_truncate(body_text),
                 inline=False,
             )
@@ -183,9 +188,10 @@ async def run(config: NewsDigestConfig) -> None:
         return
 
     # -------------------------------------------------------------- summarise
-    # Priority Sorting: Sort articles by their perceived popularity/importance before summarising.
-    # In a full implementation, this would use a 'score' field from the discovery agent.
-    # For now, we treat the order from the RSS fetcher as the baseline priority.
+    # Priority Sorting: Rank articles by their reach/popularity score.
+    # This ensures the AI focuses on the most influential stories.
+    articles.sort(key=lambda a: a.score, reverse=True)
+    
     digest = await summarize(articles, config.ai)
     embed = build_embed(
         digest,
