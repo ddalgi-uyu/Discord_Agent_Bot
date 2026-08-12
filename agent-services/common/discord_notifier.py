@@ -23,12 +23,16 @@ problems.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from collections.abc import Mapping
+
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
+import discord
 from tenacity import (
+
     AsyncRetrying,
     RetryError,
     retry_if_exception_type,
@@ -284,35 +288,68 @@ class WebhookNotifier:
 
 
 class BotNotifier:
-    """Stub for Discord bot-mode delivery.
-
-    Bot mode requires a long-running gateway connection (typically via
-    ``discord.py``), which does not fit the on-demand, stateless style of
-    this module. Until we wire up a real implementation, every send method
-    raises :class:`NotImplementedError` so callers fail loudly during
-    development. :meth:`close` is a no-op because there are no resources to
-    release.
+    """Deliver Discord messages via a Bot account using discord.py.
+    
+    This notifier requires a running discord.Client instance to send messages.
+    It is designed to be used by the main Bot process or passed into pipelines
+    that are triggered by bot commands.
     """
 
-    _STUB_MESSAGE = (
-        "Discord bot mode not yet implemented. Use webhook mode."
-    )
-
-    def __init__(self, bot_token: str, channel_id: int) -> None:
-        # We accept the parameters so the constructor matches the eventual
-        # real signature, but we do nothing with them yet.
-        self._bot_token = bot_token
+    def __init__(
+        self,
+        client: Any,  # discord.Client
+        channel_id: int,
+    ) -> None:
+        self._client = client
         self._channel_id = channel_id
 
     async def send_message(self, content: str) -> bool:
-        raise NotImplementedError(self._STUB_MESSAGE)
+        """Send a plain-text message via the bot."""
+        try:
+            channel = await self._client.fetch_channel(self._channel_id)
+            await channel.send(content)
+            return True
+        except Exception as exc:
+            logger.error("BotNotifier failed to send message: %s", exc)
+            return False
 
     async def send_embed(self, embed: Embed) -> bool:
-        raise NotImplementedError(self._STUB_MESSAGE)
+        """Send a rich embed via the bot.
+        
+        Converts our internal Embed dataclass to a discord.Embed object.
+        """
+        try:
+            channel = await self._client.fetch_channel(self._channel_id)
+            
+            # Map our internal Embed to discord.Embed
+            ds_embed = discord.Embed(
+                title=embed.title,
+                description=embed.description,
+                color=embed.color,
+                url=embed.url,
+                timestamp=datetime.fromisoformat(embed.timestamp.replace("Z", "+00:00")) if embed.timestamp else None,
+                footer=discord.EmbedFooter(text=embed.footer) if embed.footer else None,
+            )
+            if embed.image:
+                ds_embed.set_image(url=embed.image)
+            
+            for field in embed.fields:
+                ds_embed.add_field(
+                    name=field.name,
+                    value=field.value,
+                    inline=field.inline,
+                )
+                
+            await channel.send(embed=ds_embed)
+            return True
+        except Exception as exc:
+            logger.error("BotNotifier failed to send embed: %s", exc)
+            return False
 
     async def close(self) -> None:
-        # No-op: there are no resources to release in the stub.
+        # The bot client is managed by the main process, not the notifier.
         return None
+
 
 
 # ---------------------------------------------------------------------------
