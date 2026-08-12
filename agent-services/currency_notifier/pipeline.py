@@ -214,7 +214,8 @@ async def run(
     *,
     notifier: Notifier | None = None,
     client: httpx.AsyncClient | None = None,
-) -> int:
+    return_all_data: bool = False,
+) -> int | list[dict[str, Any]]:
     """Run one full polling cycle.
 
     Parameters
@@ -229,10 +230,14 @@ async def run(
         instances are built from ``config.discord`` and
         :func:`common.http_client.create_async_client` respectively, and the
         pipeline cleans them up.
+    return_all_data:
+        If True, returns a list of all processed pair data instead of the 
+        count of delivered alerts. Used for the Daily Heartbeat.
 
     Returns
     -------
-    Number of alerts successfully delivered to Discord.
+    Number of alerts successfully delivered to Discord, OR a list of 
+    per-pair results if return_all_data is True.
     """
     owned_notifier = notifier is None
     owned_client = client is None
@@ -240,37 +245,39 @@ async def run(
     if client is None:
         client = create_async_client()
     if notifier is None:
-        # ``create_notifier`` may raise ``NotifyError`` for missing config —
-        # surface that to the caller as a programming error.
         notifier = create_notifier(config.discord)
 
     delivered = 0
+    all_data: list[dict[str, Any]] = []
     try:
         store = RateStore(db)
         color = int(config.discord.default_color)
 
         for pair_cfg in config.pairs:
             try:
+                pair_dict = _coerce_pair_dict(pair_cfg)
+                pair = _pair_label(pair_dict)
+                rate = await fetch_rate(pair_dict["base"], pair_dict["quote"], client)
+                
+                if rate is None:
+                    all_data.append({"pair": pair, "rate": None, "status": "Error"})
+                    continue
+                
+                # Track data for Heartbeat regardless of notification status
+                all_data.append({"pair": pair, "rate": rate, "status": "OK"})
+                
                 if await _process_pair(pair_cfg, client, store, notifier, color):
                     delivered += 1
-            except FetchError as exc:
-                # Unknown pair is a configuration-level problem; log loudly
-                # and continue with the remaining pairs.
-                logger.error(
-                    "Skipping pair %s due to fetch error: %s",
-                    getattr(pair_cfg, "base", "?"),
-                    exc,
-                )
-            except Exception as exc:  # noqa: BLE001 — pipeline must not abort
-                logger.exception(
-                    "Unexpected failure processing pair %s: %s", pair_cfg, exc
-                )
+            except Exception as exc:
+                logger.exception("Unexpected failure processing pair %s: %s", pair_cfg, exc)
     finally:
         if owned_notifier:
             await notifier.close()
         if owned_client:
             await client.aclose()
 
+    if return_all_data:
+        return all_data
     return delivered
 
 

@@ -303,7 +303,8 @@ async def run(
     config: EtfSignalConfig,
     db_path: Path | None = None,
     notifier: Notifier | None = None,
-) -> int:
+    return_all_data: bool = False,
+) -> int | list[dict[str, Any]]:
     """Run one pipeline iteration. Returns the number of signals dispatched.
 
     ``db_path`` defaults to :data:`DEFAULT_DB_PATH`. Pass ``notifier`` to
@@ -311,9 +312,12 @@ async def run(
     from ``config.discord`` (which may itself raise :class:`NotifyError`
     when no webhook is configured — caught and logged so the loop still
     completes for the remaining symbols).
+
+    If return_all_data is True, returns a list of status for all symbols.
     """
     resolved_db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
     signals_dispatched = 0
+    all_data: list[dict[str, Any]] = []
 
     db = Database(resolved_db_path)
     try:
@@ -337,10 +341,17 @@ async def run(
                     "Skipping %s: indicator computation failed",
                     symbol,
                 )
+                all_data.append({"symbol": symbol, "price": None, "status": "Error"})
                 continue
 
             sentiment = await analyze_sentiment(symbol, config)
             signal = evaluate_signal(indicators, sentiment, config)
+            
+            # Track data for Heartbeat regardless of signal status
+            price = _safe_float(indicators.get("price"))
+            status = signal[0] if signal else "Neutral"
+            all_data.append({"symbol": symbol, "price": price, "status": status})
+
             if signal is None:
                 logger.info("No signal for %s", symbol)
                 continue
@@ -376,6 +387,8 @@ async def run(
         if notifier is not None:
             await notifier.close()
 
+    if return_all_data:
+        return all_data
     return signals_dispatched
 
 

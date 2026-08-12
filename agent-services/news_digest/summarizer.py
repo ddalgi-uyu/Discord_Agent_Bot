@@ -49,8 +49,9 @@ def _format_articles(articles: Iterable[Article]) -> str:
         if article.link:
             lines.append(f"  Link: {article.link}")
         if article.summary:
-            # Trim very long summaries to keep the prompt manageable.
-            summary = article.summary.replace("\n", " ").strip()
+            # Clean HTML tags from summaries before sending to the model
+            import re
+            summary = re.sub(r'<[^>]+>', '', article.summary).replace("\n", " ").strip()
             if len(summary) > 400:
                 summary = summary[:400].rstrip() + "…"
             lines.append(f"  Summary: {summary}")

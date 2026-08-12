@@ -101,25 +101,40 @@ async def run_all_once(
     etf_cfg: EtfSignalConfig,
     currency_cfg: CurrencyNotifierConfig,
 ) -> None:
-    """Run each app once (sequentially for safety)."""
+    """Run each app once (sequentially for safety) and send a consolidated Heartbeat.
+    """
     from common.database import Database
+    from common.heartbeat import send_heartbeat
 
     logger.info("Running all apps once (--once mode)")
 
-    # News digest — no DB needed at pipeline level
-    await _safe_run("news-digest", news_run(news_cfg))
+    # 1. News digest — run and capture output
+    # Note: news_run returns the digest string (markdown)
+    news_digest = await _safe_run("news-digest", news_run(news_cfg))
 
-    # ETF signal — needs DB path
+    # 2. ETF signal — run and capture data
     etf_db_path = _PROJECT_ROOT / "data" / "etf_signal.db"
-    await _safe_run("etf-signal", etf_run(etf_cfg, db_path=etf_db_path))
+    etf_data = await _safe_run("etf-signal", etf_run(etf_cfg, db_path=etf_db_path, return_all_data=True))
 
-    # Currency notifier — needs DB
+    # 3. Currency notifier — run and capture data
     currency_db_path = _PROJECT_ROOT / "data" / "currency_notifier.db"
     db = Database(currency_db_path)
     try:
-        await _safe_run("currency-notifier", currency_run(currency_cfg, db))
+        currency_data = await _safe_run("currency-notifier", currency_run(currency_cfg, db, return_all_data=True))
     finally:
         db.close()
+
+    # 4. Daily Heartbeat — consolidate everything into one final report
+    logger.info("Generating Daily Heartbeat report...")
+    await _safe_run(
+        "heartbeat", 
+        send_heartbeat(
+            currency_data=currency_data or [],
+            etf_data=etf_data or [],
+            news_digest=news_digest or "",
+            discord_config=news_cfg.discord
+        )
+    )
 
 
 def schedule_all(
