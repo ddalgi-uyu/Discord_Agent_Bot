@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
-import discord
 from tenacity import (
 
     AsyncRetrying,
@@ -315,9 +314,11 @@ class BotNotifier:
 
     async def send_embed(self, embed: Embed) -> bool:
         """Send a rich embed via the bot.
-        
+
         Converts our internal Embed dataclass to a discord.Embed object.
         """
+        import discord
+
         try:
             channel = await self._client.fetch_channel(self._channel_id)
             

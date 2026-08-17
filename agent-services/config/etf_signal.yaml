@@ -1,7 +1,7 @@
 app_name: etf-signal
 discord:
   mode: webhook
-  webhook_url: https://discordapp.com/api/webhooks/1536577285581307964/AOcJGcEypXikaKeGKCEGsqSp-QJL53owqwvHqKn7ybaXfcQBd7Rp5GkesRoPN5HDhLJ4
+  webhook_url: ""
   default_color: 5763719
 symbols:
 - SPY

@@ -34,6 +34,9 @@ etf-signal = [
     "torch>=2.2",
 ]
 currency-notifier = []
+bot = [
+    "discord.py>=2.3",
+]
 all = ["agent-services[news-digest,etf-signal,currency-notifier]"]
 
 [project.scripts]

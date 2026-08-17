@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # Ensure project root is importable
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -88,12 +89,19 @@ def _resolve_webhook_urls(
 # ---------------------------------------------------------------------------
 
 
-async def _safe_run(label: str, coro) -> None:  # type: ignore[arg-type]
-    """Run a single app cycle, catching and logging any exception."""
+async def _safe_run(label: str, coro) -> Any:
+    """Run a single app cycle, catching and logging any exception.
+
+    Returns the inner coroutine's result on success, or ``None`` on failure
+    so that callers can keep going without aborting the consolidated
+    Heartbeat. The original implementation returned ``None`` unconditionally,
+    which caused ``run_all_once`` to feed empty data into ``send_heartbeat``.
+    """
     try:
-        await coro
+        return await coro
     except Exception as exc:  # noqa: BLE001
         logger.exception("%s failed: %s", label, exc)
+        return None
 
 
 async def run_all_once(

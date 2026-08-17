@@ -8,19 +8,30 @@ This setup uses GitHub Actions to run the bot daily for free, removing the need 
 
 ### 1. Repository Setup
 1. Create a **Private** repository on GitHub.
-2. Push all files from the `agent-services` directory.
-3. **Crucial**: Ensure `config/*.yaml` files are NOT pushed (they are handled by GitHub Secrets).
+2. Push all files from the `agent-services` directory, **including** the YAML configs under `agent-services/config/`. The committed configs ship with empty `webhook_url` fields by design — secrets are injected at runtime via GitHub Secrets.
+3. **Branch requirement**: GitHub Actions `on.schedule` events only fire against the repository's **default branch**. The default branch must contain the `agent-services/` directory and the workflow file. Either:
+   - Develop on the default branch, or
+   - Rename the branch you develop on to be the default (Settings → Branches → Default branch), or
+   - Merge your dev branch into the default branch after every change.
 
 ### 2. Configure GitHub Secrets
-Navigate to `Settings` $\rightarrow$ `Secrets and variables` $\rightarrow$ `Actions` and add the following secrets:
+Navigate to `Settings` → `Secrets and variables` → `Actions` and add the following secrets:
 
 | Secret Name | Value | Description |
 | :--- | :--- | :--- |
-| `DISCORD_WEBHOOK_URL` | `https://discord.com/api/webhooks/...` | Your primary Discord webhook URL |
+| `DISCORD_WEBHOOK_URL` | `https://discord.com/api/webhooks/...` | Your primary Discord webhook URL. `run_all.py` resolves this into any config that has an empty `webhook_url`. |
 | `NEWS_DIGEST_AI__PROVIDER` | `fallback` | Set to `fallback` for zero cost, or `anthropic`/`openai` if you have keys |
 
 ### 3. Automation Workflow
 Create the file `.github/workflows/daily_intelligence.yml` with the provided YAML configuration. This triggers the bot every day at 00:00 UTC.
+
+### 4. (Optional) Run the Discord Bot
+The interactive slash-command bot in `agent-services/bot.py` is not used by the daily workflow. To run it locally or on a host:
+```bash
+pip install "agent-services[bot]"
+DISCORD_BOT_TOKEN=... python -m bot
+```
+The `[bot]` extra installs `discord.py`, which is otherwise an optional dependency to keep the workflow image small.
 
 ---
 
