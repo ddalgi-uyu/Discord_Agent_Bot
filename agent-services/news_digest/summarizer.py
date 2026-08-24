@@ -225,7 +225,7 @@ async def _summarize_fallback(
         # Instead of just the snippet, we append the link as a markdown link
         # This solves the HTML tag issue and makes it look professional
         link_text = f" [Source]({art.link})" if art.link else ""
-        summaries.append(f"**{i}. {art.title}**\n{snippet}{link_text}")
+        summaries.append(f"## {i}. {art.title}\n{snippet}{link_text}")
     
     if not summaries:
         return "No articles found for this category."
