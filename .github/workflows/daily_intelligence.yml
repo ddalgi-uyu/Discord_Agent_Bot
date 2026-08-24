@@ -23,18 +23,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install dependencies from the requirements file
-          if (Test-Path "agent-services/requirements.txt") {
+          if [ -f agent-services/requirements.txt ]; then
             pip install -r agent-services/requirements.txt
-          } else {
-            # Fallback to common required libraries if requirements.txt is missing
+          else
             pip install httpx pydantic pandas pandas-ta yfinance tenacity
-          }
+          fi
 
       - name: Run Intelligence Hub
         env:
-          # Mapping GitHub Secrets to the Environment Variables your code expects
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           NEWS_DIGEST_AI__PROVIDER: ${{ secrets.NEWS_DIGEST_AI__PROVIDER }}
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)/agent-services
