@@ -39,6 +39,38 @@ from news_digest.pipeline import run as news_run
 
 logger = logging.getLogger(__name__)
 
+
+# Optional-dep -> pyproject extras mapping. Each app's pipeline imports its
+# deps lazily inside the coroutine, so a missing dep surfaces as a confusing
+# traceback mid-run. Failing fast at startup gives the operator a single-line
+# fix.
+_OPTIONAL_DEPS: dict[str, str] = {
+    "feedparser": "news-digest",
+    "yfinance": "etf-signal",
+    "pandas": "etf-signal",
+    "pandas_ta": "etf-signal",
+}
+
+
+def _check_dependencies() -> None:
+    """Import each optional dep and exit 1 with an actionable error if missing."""
+    missing: list[str] = []
+    extras: set[str] = set()
+    for module_name, extra_name in _OPTIONAL_DEPS.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing.append(module_name)
+            extras.add(extra_name)
+    if missing:
+        extras_str = ",".join(sorted(extras))
+        sys.stderr.write(
+            f"Missing optional dependencies: {', '.join(missing)}. "
+            f"Install with: pip install -e .[{extras_str}]\n"
+        )
+        sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
@@ -339,6 +371,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    _check_dependencies()
     news_cfg, etf_cfg, currency_cfg = _load_configs()
     _resolve_webhook_urls(news_cfg, etf_cfg, currency_cfg)
 

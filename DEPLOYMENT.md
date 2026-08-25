@@ -54,7 +54,6 @@ The `[bot]` extra installs `discord.py`, which is otherwise an optional dependen
 ```text
 agent-services/
 ├── common/            # Shared utilities (Discord, Config, Visualizer)
-├── discovery_agent/    # Autonomous asset/feed discovery
 ├── news_digest/        # RSS fetching and AI summarization
 ├── etf_signal/        # Technical analysis and signal generation
 ├── currency_notifier/  # FX rate monitoring
