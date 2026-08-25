@@ -24,9 +24,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f agent-services/requirements.txt ]; then
-            pip install -r agent-services/requirements.txt
+            pip install --timeout 120 --retries 5 --no-cache-dir -r agent-services/requirements.txt
           else
-            pip install httpx pydantic pandas pandas-ta yfinance tenacity
+            pip install --timeout 120 --retries 5 --no-cache-dir httpx pydantic pandas pandas-ta yfinance tenacity
           fi
 
       - name: Run Intelligence Hub
