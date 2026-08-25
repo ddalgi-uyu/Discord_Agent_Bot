@@ -15,6 +15,8 @@ import asyncio
 import logging
 import os
 import sys
+import time
+from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any
 
@@ -89,60 +91,180 @@ def _resolve_webhook_urls(
 # ---------------------------------------------------------------------------
 
 
-async def _safe_run(label: str, coro) -> Any:
-    """Run a single app cycle, catching and logging any exception.
+async def _safe_run(label: str, coro: Awaitable[Any]) -> dict[str, Any]:
+    """Run a single app cycle and capture per-app status.
 
-    Returns the inner coroutine's result on success, or ``None`` on failure
-    so that callers can keep going without aborting the consolidated
-    Heartbeat. The original implementation returned ``None`` unconditionally,
-    which caused ``run_all_once`` to feed empty data into ``send_heartbeat``.
+    Returns a status dict with the shape::
+
+        {
+            "label": str,
+            "ok": bool,         # False only if the coroutine raised
+            "duration_s": float,
+            "items": int,       # post-processed by callers (e.g. via value)
+            "error": str | None,
+            "value": Any,       # raw coroutine return on success, else None
+        }
+
+    ``ok`` defaults to ``True`` when the coroutine resolves without raising.
+    Callers that care about a specific success signal (e.g. ``send_heartbeat``
+    returning ``False``) post-process the ``value`` field and may override
+    ``ok``. The dict shape makes per-app timing/items/visibility trivial to
+    surface in the heartbeat's ``🩺 Status`` field and ``last_run.json``.
     """
+    started = time.perf_counter()
     try:
-        return await coro
+        value = await coro
     except Exception as exc:  # noqa: BLE001
+        duration = time.perf_counter() - started
         logger.exception("%s failed: %s", label, exc)
+        return {
+            "label": label,
+            "ok": False,
+            "duration_s": duration,
+            "items": 0,
+            "error": str(exc),
+            "value": None,
+        }
+    duration = time.perf_counter() - started
+    return {
+        "label": label,
+        "ok": True,
+        "duration_s": duration,
+        "items": 0,
+        "error": None,
+        "value": value,
+    }
+
+
+_LAST_RUN_PATH = _PROJECT_ROOT / "data" / "last_run.json"
+
+
+def _read_previous_run() -> dict[str, Any] | None:
+    """Load the previous run's summary from disk, or ``None`` if absent.
+
+    Used to populate the heartbeat's ``Last successful run: …`` footer so
+    operators see at a glance how stale a missed run is. A missing or
+    malformed file is treated as "first run" rather than an error — we
+    never want a status file to crash the cron.
+    """
+    if not _LAST_RUN_PATH.exists():
         return None
+    try:
+        import json
+        with open(_LAST_RUN_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not read last_run.json (%s) — treating as first run", exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_last_run(payload: dict[str, Any]) -> None:
+    """Persist the current run's summary for the *next* heartbeat footer.
+
+    Strips the ``value`` field from each app entry (raw coroutine returns
+    are not JSON-serialisable and not useful to persist). Called at the end
+    of :func:`run_all_once` after the heartbeat has been sent.
+    """
+    import json
+    _LAST_RUN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    serialisable = {
+        **payload,
+        "apps": [
+            {k: v for k, v in app.items() if k != "value"}
+            for app in payload.get("apps", [])
+        ],
+    }
+    with open(_LAST_RUN_PATH, "w", encoding="utf-8") as f:
+        json.dump(serialisable, f, indent=2, sort_keys=False)
+        f.write("\n")
 
 
 async def run_all_once(
     news_cfg: NewsDigestConfig,
     etf_cfg: EtfSignalConfig,
     currency_cfg: CurrencyNotifierConfig,
-) -> None:
-    """Run each app once (sequentially for safety) and send a consolidated Heartbeat.
+) -> bool:
+    """Run each app once and send a consolidated Heartbeat.
+
+    Returns ``True`` if the heartbeat was delivered to Discord, ``False``
+    otherwise. The boolean drives the process exit code so cron failures
+    become visible in CI and in operator alerts. App-level failures are
+    logged and reported in the ``🩺 Status`` field but do not by themselves
+    cause a non-zero exit — only a failed heartbeat does, because a missing
+    heartbeat is the user-visible failure mode.
     """
+    from datetime import UTC, datetime
+
     from common.database import Database
     from common.heartbeat import send_heartbeat
+    from news_digest.pipeline import _last_digest_text, parse_digest_sections
 
     logger.info("Running all apps once (--once mode)")
+    previous_run = _read_previous_run()
+    statuses: list[dict[str, Any]] = []
 
-    # 1. News digest — run and capture output
-    # Note: news_run returns the digest string (markdown)
-    news_digest = await _safe_run("news-digest", news_run(news_cfg))
+    # 1. News digest — run and capture output via the ContextVar side-channel.
+    news_status = await _safe_run("news-digest", news_run(news_cfg))
+    digest_text = _last_digest_text.get()
+    if digest_text:
+        _, sections = parse_digest_sections(digest_text)
+        news_status["items"] = len(sections)
+    statuses.append(news_status)
 
-    # 2. ETF signal — run and capture data
+    # 2. ETF signal
     etf_db_path = _PROJECT_ROOT / "data" / "etf_signal.db"
-    etf_data = await _safe_run("etf-signal", etf_run(etf_cfg, db_path=etf_db_path, return_all_data=True))
+    etf_status = await _safe_run(
+        "etf-signal",
+        etf_run(etf_cfg, db_path=etf_db_path, return_all_data=True),
+    )
+    if isinstance(etf_status["value"], list):
+        etf_status["items"] = len(etf_status["value"])
+    statuses.append(etf_status)
 
-    # 3. Currency notifier — run and capture data
+    # 3. Currency notifier
     currency_db_path = _PROJECT_ROOT / "data" / "currency_notifier.db"
     db = Database(currency_db_path)
     try:
-        currency_data = await _safe_run("currency-notifier", currency_run(currency_cfg, db, return_all_data=True))
+        currency_status = await _safe_run(
+            "currency-notifier",
+            currency_run(currency_cfg, db, return_all_data=True),
+        )
     finally:
         db.close()
+    if isinstance(currency_status["value"], list):
+        currency_status["items"] = len(currency_status["value"])
+    statuses.append(currency_status)
 
-    # 4. Daily Heartbeat — consolidate everything into one final report
+    # 4. Daily Heartbeat — consolidate everything into one final report.
+    # The send_heartbeat coroutine returns ``bool``; that bool is captured
+    # in ``value`` and used to override ``ok`` (a False return without an
+    # exception is still a failure for the operator).
     logger.info("Generating Daily Heartbeat report...")
-    await _safe_run(
-        "heartbeat", 
+    heartbeat_status = await _safe_run(
+        "heartbeat",
         send_heartbeat(
-            currency_data=currency_data or [],
-            etf_data=etf_data or [],
-            news_digest=news_digest or "",
-            discord_config=news_cfg.discord
-        )
+            currency_data=currency_status["value"] or [],
+            etf_data=etf_status["value"] or [],
+            news_digest=digest_text or "",
+            discord_config=news_cfg.discord,
+            statuses=statuses,
+            previous_run=previous_run,
+        ),
     )
+    heartbeat_status["items"] = 1 if heartbeat_status["value"] else 0
+    heartbeat_status["ok"] = bool(heartbeat_status["value"])
+    statuses.append(heartbeat_status)
+
+    # 5. Persist this run's summary for the *next* run's footer.
+    _write_last_run({
+        "timestamp": datetime.now(tz=UTC).isoformat(timespec="seconds"),
+        "duration_s": sum(s["duration_s"] for s in statuses),
+        "apps": statuses,
+        "heartbeat_sent": heartbeat_status["ok"],
+    })
+
+    return heartbeat_status["ok"]
 
 
 def schedule_all(
@@ -228,8 +350,8 @@ def main() -> int:
     log = get_logger("run_all")
 
     if args.once:
-        asyncio.run(run_all_once(news_cfg, etf_cfg, currency_cfg))
-        return 0
+        heartbeat_ok = asyncio.run(run_all_once(news_cfg, etf_cfg, currency_cfg))
+        return 0 if heartbeat_ok else 1
 
     scheduler = schedule_all(news_cfg, etf_cfg, currency_cfg)
 

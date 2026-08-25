@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextvars import ContextVar
 from datetime import UTC, datetime
 
 from common.discord_notifier import Embed, EmbedField, create_notifier
@@ -22,6 +23,15 @@ from news_digest.rss_fetcher import Article, fetch_items
 from news_digest.summarizer import summarize
 
 __all__ = ["run", "build_embed", "parse_digest_sections"]
+
+# Side-channel that lets the unified runner count the number of categories
+# in the digest without changing run()'s public signature. Set inside run()
+# right after ``summarize`` resolves, read by ``scripts.run_all._safe_run``
+# immediately after the coroutine returns. ``ContextVar`` is async-safe and
+# does not leak across the process — each task sees its own value.
+_last_digest_text: ContextVar[str | None] = ContextVar(
+    "_last_digest_text", default=None
+)
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +203,7 @@ async def run(config: NewsDigestConfig) -> None:
     articles.sort(key=lambda a: a.score, reverse=True)
     
     digest = await summarize(articles, config.ai)
+    _last_digest_text.set(digest)
     embed = build_embed(
         digest,
         color=getattr(config.discord, "default_color", EMBED_COLOR),
