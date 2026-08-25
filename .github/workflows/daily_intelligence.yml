@@ -5,8 +5,36 @@ on:
     # This runs at 00:00 UTC every day.
     - cron: '0 0 * * *'
   workflow_dispatch: # Allows you to trigger it manually for testing
+  push:
+    branches: [main, feature/**]
+  pull_request:
+    branches: [main]
 
 jobs:
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: agent-services/pyproject.toml
+
+      - name: Install dependencies (dev)
+        working-directory: agent-services
+        run: |
+          python -m pip install --upgrade pip
+          pip install --timeout 120 --retries 5 --no-cache-dir -e ".[dev]"
+
+      - name: Run pytest
+        working-directory: agent-services
+        run: pytest --no-header -q --tb=short
+
   run-bot:
     runs-on: ubuntu-latest
 
@@ -34,6 +62,17 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           NEWS_DIGEST_AI__PROVIDER: ${{ secrets.NEWS_DIGEST_AI__PROVIDER }}
+          AGENT_SERVICES_LOG_FILE: agent-services/data/logs/run.log
         run: |
+          mkdir -p agent-services/data/logs
           export PYTHONPATH=$PYTHONPATH:$(pwd)/agent-services
           python agent-services/scripts/run_all.py --once
+
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-logs-${{ github.run_id }}
+          path: agent-services/data/logs/
+          retention-days: 7
+          if-no-files-found: warn

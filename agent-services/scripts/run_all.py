@@ -346,6 +346,9 @@ def main() -> int:
         level=news_cfg.logging.level,
         json=news_cfg.logging.json,
         app_name="unified",
+        log_file=Path(os.environ["AGENT_SERVICES_LOG_FILE"])
+        if os.environ.get("AGENT_SERVICES_LOG_FILE")
+        else None,
     )
     log = get_logger("run_all")
 
